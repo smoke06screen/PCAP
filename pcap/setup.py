@@ -54,8 +54,8 @@ setup(
 
         # URDF / model files
         (
-            os.path.join('share', package_name, 'model'),
-            glob('model/*')
+            os.path.join('share', package_name, 'urdf'),
+            glob('urdf/*')
         ),
 
         # Mesh files
