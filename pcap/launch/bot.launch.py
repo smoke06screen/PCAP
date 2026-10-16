@@ -23,7 +23,7 @@ def generate_launch_description():
 
     urdf_file = os.path.join(
         package_share,
-        'model',
+        'urdf',
         'pcap_model.urdf'
     )
 
