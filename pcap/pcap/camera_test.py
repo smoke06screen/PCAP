@@ -1,14 +1,13 @@
-import os
 import ctypes
+from importlib.machinery import EXTENSION_SUFFIXES
+import os
 
 import cv2
 import numpy as np
 
 import rclpy
 from rclpy.node import Node
-
 from sensor_msgs.msg import Image
-from ament_index_python.packages import get_package_share_directory
 
 
 class CameraTest(Node):
@@ -20,12 +19,12 @@ class CameraTest(Node):
         # Load the C shared library
         # ---------------------------------------------------------
 
-        package_share = get_package_share_directory('pcap')
-
-        library_path = os.path.join(
-            package_share,
-            'lib',
-            'libperception.so'
+        library_path = next(
+            os.path.join(os.path.dirname(__file__), 'libperception' + suffix)
+            for suffix in EXTENSION_SUFFIXES
+            if os.path.isfile(
+                os.path.join(os.path.dirname(__file__), 'libperception' + suffix)
+            )
         )
 
         self.lib = ctypes.CDLL(library_path)
@@ -44,6 +43,11 @@ class CameraTest(Node):
         ]
 
         self.lib.process_rgb8_to_gray.restype = ctypes.c_int
+
+        self.declare_parameter('show_window', True)
+        self.show_window = self.get_parameter(
+            'show_window'
+        ).get_parameter_value().bool_value
 
         self.get_logger().info(
             f'Loaded C library: {library_path}'
@@ -76,13 +80,21 @@ class CameraTest(Node):
             )
             return
 
+        row_size = msg.width * 3
+        buffer_size = msg.step * msg.height
+
+        if msg.step < row_size or len(msg.data) < buffer_size:
+            self.get_logger().error('Invalid RGB image buffer dimensions')
+            return
+
         rgb = np.frombuffer(
             msg.data,
-            dtype=np.uint8
-        ).reshape(
-            msg.height,
-            msg.width,
-            3
+            dtype=np.uint8,
+            count=buffer_size
+        ).reshape(msg.height, msg.step)[:, :row_size]
+
+        rgb = np.ascontiguousarray(
+            rgb.reshape(msg.height, msg.width, 3)
         )
 
         # ---------------------------------------------------------
@@ -123,8 +135,9 @@ class CameraTest(Node):
         # Display C/OpenMP result
         # ---------------------------------------------------------
 
-        cv2.imshow('C + OpenMP - Grayscale', gray)
-        cv2.waitKey(1)
+        if self.show_window:
+            cv2.imshow('C + OpenMP - Grayscale', gray)
+            cv2.waitKey(1)
 
 
 def main(args=None):

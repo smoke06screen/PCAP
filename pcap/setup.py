@@ -1,6 +1,7 @@
-from setuptools import find_packages, setup
 from glob import glob
 import os
+
+from setuptools import Extension, find_packages, setup
 
 package_name = 'pcap'
 
@@ -32,6 +33,15 @@ setup(
     version='0.0.0',
 
     packages=find_packages(exclude=['test']),
+
+    ext_modules=[
+        Extension(
+            'pcap.libperception',
+            sources=['pcap/native/perception.c'],
+            extra_compile_args=['-O3', '-fopenmp'],
+            extra_link_args=['-fopenmp'],
+        ),
+    ],
 
     data_files=[
         # ROS package index
@@ -70,11 +80,6 @@ setup(
             glob('worlds/*.world')
         ),
 
-        # Native C/OpenMP shared library
-        (
-            os.path.join('share', package_name, 'lib'),
-            ['pcap/native/libperception.so']
-        ),
     ]
 
     # Add all Gazebo model files
@@ -82,10 +87,10 @@ setup(
 
     install_requires=['setuptools'],
 
-    zip_safe=True,
+    zip_safe=False,
 
     maintainer='shubh',
-    maintainer_email='shubh06kesarwani@gmail.com',
+    maintainer_email='shubh06kesar@gmail.com',
 
     description='PCAP parallel computer vision project',
     license='Apache-2.0',

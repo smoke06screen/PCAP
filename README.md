@@ -95,39 +95,14 @@ From the workspace root:
 ``` bash
 cd ~/PCAP
 source /opt/ros/humble/setup.bash
+sudo apt install build-essential
+rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install
 source install/setup.bash
 ```
 
-Compile the native library from the package source directory:
-
-``` bash
-cd ~/PCAP/src/pcap
-
-gcc -O3 -fopenmp -fPIC -shared \
-    pcap/native/perception.c \
-    -o pcap/native/libperception.so
-```
-
-Check the library and its OpenMP dependency:
-
-``` bash
-file pcap/native/libperception.so
-ldd pcap/native/libperception.so | grep -E 'gomp|not found'
-```
-
-If the package installs the library into the workspace's install tree,
-rebuild the package after recompiling:
-
-``` bash
-cd ~/PCAP
-colcon build --symlink-install --packages-select pcap
-source install/setup.bash
-```
-
-Make sure the path passed to `ctypes.CDLL` points to the current
-library. Avoid relying on the current working directory, since ROS2
-launch files may start a node from a different directory.
+The native C/OpenMP library is compiled automatically during the
+`colcon` build.
 
 ## Running
 
@@ -166,16 +141,17 @@ Confirm actual topic names with `ros2 topic list`.
 
 ### 4. Run the camera-processing node
 
-The package contains `camera_test.py`. If it is registered as a console
-script in `setup.py`, run:
+Run the registered camera-processing executable:
 
 ``` bash
 ros2 run pcap camera_test
 ```
 
-If it is not registered as a console script, use the package's current
-development workflow or add the appropriate `console_scripts` entry to
-`setup.py`.
+On a headless system, disable the OpenCV window:
+
+``` bash
+ros2 run pcap camera_test --ros-args -p show_window:=false
+```
 
 ## Camera configuration
 
@@ -210,15 +186,16 @@ each road feature occupy fewer pixels at a fixed resolution.
 
 ### ROS image buffer
 
-The prototype assumes `rgb8`. Conceptually:
+The node accepts `rgb8`, validates the row stride and buffer size, and
+copies the active pixels into a contiguous NumPy array before calling C.
+Conceptually:
 
 ``` python
-image = np.frombuffer(msg.data, dtype=np.uint8)
-image = image.reshape((msg.height, msg.width, 3))
+rows = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.step)
+image = np.ascontiguousarray(
+    rows[:, :msg.width * 3].reshape(msg.height, msg.width, 3)
+)
 ```
-
-Validate `msg.encoding`, dimensions, and buffer length before using this
-pattern. Do not assume every ROS image encoding has three channels.
 
 ### C/OpenMP interface
 
@@ -264,13 +241,12 @@ pipeline timings.
 
 ## Troubleshooting
 
-### `libperception.so` cannot be loaded
+### `libperception*.so` cannot be loaded
 
--   Recompile the library using the command above.
--   Check the path used by `ctypes.CDLL`.
--   Run `ldd` on the library and resolve any `not found` dependencies.
--   Rebuild the ROS2 package if the install tree contains an older
-    copy.
+-   Install GCC/OpenMP build support and rebuild the package.
+-   Run `ldd` on the installed library and resolve any `not found`
+    dependencies.
+-   Source the rebuilt workspace before starting the node.
 
 ### `cv_bridge` / NumPy ABI error
 

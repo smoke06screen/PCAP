@@ -38,6 +38,8 @@ def generate_launch_description():
         'models'
     )
 
+    packages_path = os.path.dirname(package_share)
+
     # ------------------------------------------------------------
     # Read URDF
     # ------------------------------------------------------------
@@ -55,12 +57,15 @@ def generate_launch_description():
         ''
     )
 
+    gazebo_model_paths = [
+        models_path,
+        packages_path,
+    ]
+
     if existing_model_path:
-        gazebo_model_path = (
-            models_path + ':' + existing_model_path
-        )
-    else:
-        gazebo_model_path = models_path
+        gazebo_model_paths.append(existing_model_path)
+
+    gazebo_model_path = os.pathsep.join(gazebo_model_paths)
 
     gazebo_model_path_env = SetEnvironmentVariable(
         name='GAZEBO_MODEL_PATH',
