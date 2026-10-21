@@ -71,6 +71,11 @@ def scene(kind):
     elif kind == 'pair_with_stripe':
         image[:, 50:110] = 200
         image[66:71, :] = (0, 150, 0)
+    elif kind == 'slanted_pair':
+        for y in range(image.shape[0]):
+            left = round(65 - (y - 36) * 20 / 56)
+            right = round(95 + (y - 36) * 20 / 56)
+            image[y, left:right] = 200
     return image
 
 
@@ -126,3 +131,42 @@ def test_tiny_frame_has_empty_safe_masks(native):
     assert result.validity == 0
     assert not np.any(outputs[-1])
     assert not np.any(outputs[-2])
+
+
+def test_moderate_inward_slant_scores_above_vertical(native):
+    slanted, outputs = run_scene(native, scene('slanted_pair'))
+    vertical, _ = run_scene(native, scene('pair'))
+    assert slanted.validity == 3
+    assert outputs[-1][60, 80] == 255
+    assert slanted.left_confidence > vertical.left_confidence
+    assert slanted.right_confidence > vertical.right_confidence
+
+
+def test_saved_gazebo_frame_with_clipped_boundaries(native):
+    frame = np.load(Path(__file__).parent / 'frames/gazebo_camera_rgb8_001.npy')
+    result, outputs = run_scene(native, frame)
+    assert result.validity == 3
+    boundary = outputs[-2]
+    for y, expected_left, expected_right in [(144, 198, 482),
+                                             (220, 92, 616)]:
+        points = np.flatnonzero(boundary[y])
+        assert abs(points[0] - expected_left) <= 12
+        assert abs(points[-1] - expected_right) <= 12
+    assert outputs[-1][200, 320] == 255
+    assert outputs[-1][350, 320] == 0
+
+
+def test_saved_short_left_boundary_below_world_horizon(native):
+    frame = np.load(Path(__file__).parent /
+                    'frames/gazebo_camera_rgb8_failing_001.npy')
+    result, outputs = run_scene(native, frame)
+    assert result.validity == 3
+    boundary = outputs[-2]
+    for y, expected_left, expected_right in [(144, 114, 401),
+                                             (200, 21, 480)]:
+        points = np.flatnonzero(boundary[y])
+        assert abs(points[0] - expected_left) <= 15
+        assert abs(points[-1] - expected_right) <= 15
+    assert not np.any(boundary[70])
+    assert outputs[-1][180, 300] == 255
+    assert outputs[-1][180, 20] == 0

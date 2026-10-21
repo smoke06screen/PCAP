@@ -40,7 +40,7 @@ Implemented components:
 -   Native C shared library loaded through Python `ctypes`.
 -   RGB-to-grayscale, 3×3 box blur, thresholded Sobel edges, a color
     candidate mask, and Hough voting in C using OpenMP where applicable.
--   Hough candidates scored by vertical orientation, edge continuity,
+-   Hough candidates scored by plausible slant, boundary continuity,
     and votes; a compatible left/right pair is selected before filling
     the traversable mask.
 -   Explicit detector states and evidence scores available from the C
@@ -222,16 +222,31 @@ OpenMP performance claim can yet be made.
 
 ### Boundary selection and failure states
 
-Hough votes come from thresholded Sobel edges inside the color candidate
-mask, between 30% and 78% of image height. Candidate lines are checked
-for edge support within two pixels along this region. Lines with support
-below 0.45 are rejected. The candidate score is
-`0.55 × verticality + 0.35 × edge support + 0.10 × normalized votes`,
-where `verticality = |cos(theta)|` for the Hough line normal. This gives
-near-vertical lines the most weight; lines with verticality below 0.35
-are rejected, so near-horizontal markings cannot become boundaries.
+The thresholded Sobel view remains available for diagnostics. Hough
+votes now come from the left and right transitions of the center-connected
+color road mask, between 25% and 78% of image height. This limits voting
+from asphalt texture and nearby grass. Candidate lines are checked for
+boundary support within two pixels along their visible part; at least
+20% of the tested height must be visible. Lines with support below 0.45
+or votes below 12% of the tested height are rejected. A line may leave
+the image near the bottom, where the resulting mask is clipped to the
+image. The candidate score is
+`0.55 × orientation + 0.35 × edge support + 0.10 × normalized votes`.
+Orientation uses the horizontal displacement per image row over the
+tested region. It scores a modest outward slant (about 0.35 pixels per
+row) above a perfectly vertical line; a line slanting the wrong way for
+its side is penalized. Lines with `|cos(theta)|` below 0.35 are still
+rejected, so near-horizontal markings cannot become boundaries.
 These constants are currently fixed in C and should be tuned only with
 recorded test data.
+
+The captured `pcap/test/frames/gazebo_camera_rgb8_001.npy` and
+`gazebo_camera_rgb8_failing_001.npy` frames are repeatable regression
+cases for roads whose edges leave the lower image. In the second frame,
+the left edge is visible only briefly while the world/sky edge is above
+the voting region.
+The color mask assumes the road is less green than its surroundings;
+other road materials and lighting still need labelled evaluation.
 
 The detector tests left/right pairs for ordering, plausible width at
 the top and bottom of the region, and convergence. A valid pair fills

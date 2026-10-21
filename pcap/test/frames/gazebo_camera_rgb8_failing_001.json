@@ -1,0 +1,19 @@
+{
+  "topic": "/camera/image_raw",
+  "encoding": "rgb8",
+  "width": 640,
+  "height": 480,
+  "step": 1920,
+  "frame_id": "camera_link_optical",
+  "ros_stamp_sec": 500,
+  "ros_stamp_nanosec": 845000000,
+  "captured_utc": "2026-10-21T11:57:20.708451+00:00",
+  "array_file": "gazebo_camera_rgb8_failing_001.npy",
+  "array_shape": [
+    480,
+    640,
+    3
+  ],
+  "array_dtype": "uint8",
+  "note": "Lossless active RGB8 pixels; row padding, if any, was excluded."
+}
