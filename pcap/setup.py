@@ -39,7 +39,7 @@ setup(
             'pcap.libperception',
             sources=['pcap/native/perception.c'],
             extra_compile_args=['-O3', '-fopenmp'],
-            extra_link_args=['-fopenmp'],
+            extra_link_args=['-fopenmp', '-lm'],
         ),
     ],
 

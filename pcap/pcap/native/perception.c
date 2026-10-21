@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <math.h>
+#include <limits.h>
+#include <string.h>
 
 #include <omp.h>
 
@@ -16,11 +18,6 @@ static inline int clamp_int(int value, int low, int high)
     }
 
     return value;
-}
-
-static inline double abs_double(double value)
-{
-    return (value < 0.0) ? -value : value;
 }
 
 static inline int max_int(int a, int b)
@@ -219,75 +216,159 @@ static void build_road_candidate_mask(
     }
 }
 
-static void draw_line_segment(
-    uint8_t *mask,
-    int width,
-    int height,
-    int x0,
-    int y0,
-    int x1,
-    int y1,
-    uint8_t value
-)
+/* Scores are evidence weights, not calibrated probabilities. */
+enum { NO_BOUNDARY = 0, LEFT_ONLY = 1, RIGHT_ONLY = 2,
+       VALID_PAIR = 3, PAIR_REJECTED = 4, LOW_CONFIDENCE = 5 };
+enum { THETA_MIN = 0, THETA_BINS = 180,
+       MAX_CANDIDATES = 24, SUPPORT_RADIUS = 2 };
+
+typedef struct {
+    int validity;
+    float confidence;
+    float left_confidence;
+    float right_confidence;
+} PerceptionResult;
+
+typedef struct {
+    int theta;
+    int rho;
+    int votes;
+    double x_top;
+    double x_bottom;
+    double verticality;
+    double support;
+    double score;
+} Candidate;
+
+static double line_x(double rho, double sine, double cosine, int y)
 {
-    int dx = abs(x1 - x0);
-    int sx = (x0 < x1) ? 1 : -1;
-    int dy = -abs(y1 - y0);
-    int sy = (y0 < y1) ? 1 : -1;
-    int error = dx + dy;
+    return (rho - (double)y * sine) / cosine;
+}
 
-    while (1) {
-        if (x0 >= 0 && x0 < width && y0 >= 0 && y0 < height) {
-            mask[(size_t)y0 * (size_t)width + (size_t)x0] = value;
-        }
-
-        if (x0 == x1 && y0 == y1) {
-            break;
-        }
-
-        const int twice_error = 2 * error;
-
-        if (twice_error >= dy) {
-            error += dy;
-            x0 += sx;
-        }
-
-        if (twice_error <= dx) {
-            error += dx;
-            y0 += sy;
+static void draw_candidate(uint8_t *mask, const Candidate *candidate,
+                           int width, int top, int bottom)
+{
+    const double slope = (candidate->x_bottom - candidate->x_top) /
+                         (double)(bottom - top);
+    for (int y = top; y <= bottom; ++y) {
+        const int x = (int)lround(candidate->x_top + (y - top) * slope);
+        if (x >= 0 && x < width) {
+            mask[(size_t)y * (size_t)width + (size_t)x] = 255;
         }
     }
 }
 
-static void detect_boundaries_and_traversable(
+static double edge_support(const uint8_t *edges, const Candidate *candidate,
+                           int width, int top, int bottom)
+{
+    int supported = 0;
+    const int samples = bottom - top + 1;
+    const double slope = (candidate->x_bottom - candidate->x_top) /
+                         (double)(bottom - top);
+    for (int y = top; y <= bottom; ++y) {
+        const int x = (int)lround(candidate->x_top + (y - top) * slope);
+        for (int dx = -SUPPORT_RADIUS; dx <= SUPPORT_RADIUS; ++dx) {
+            const int xx = x + dx;
+            if (xx >= 0 && xx < width &&
+                edges[(size_t)y * (size_t)width + (size_t)xx] != 0) {
+                ++supported;
+                break;
+            }
+        }
+    }
+    return (double)supported / (double)samples;
+}
+
+static void add_candidate(Candidate *list, int *count, Candidate candidate)
+{
+    int place = *count;
+    if (place == MAX_CANDIDATES) {
+        if (candidate.score <= list[place - 1].score) {
+            return;
+        }
+        --place;
+    } else {
+        ++*count;
+    }
+    while (place > 0 && list[place - 1].score < candidate.score) {
+        list[place] = list[place - 1];
+        --place;
+    }
+    list[place] = candidate;
+}
+
+static int is_local_peak(const int *accumulator, int t, int r, int rho_bins)
+{
+    const int votes = accumulator[(size_t)t * (size_t)rho_bins + (size_t)r];
+    for (int dt = -2; dt <= 2; ++dt) {
+        const int tt = t + dt;
+        if (tt < 0 || tt >= THETA_BINS) continue;
+        for (int dr = -3; dr <= 3; ++dr) {
+            const int rr = r + dr;
+            if (rr < 0 || rr >= rho_bins || (dt == 0 && dr == 0)) continue;
+            const int neighbor = accumulator[(size_t)tt * (size_t)rho_bins +
+                                             (size_t)rr];
+            if (neighbor > votes ||
+                (neighbor == votes && (tt < t || (tt == t && rr < r)))) {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+static double pair_geometry(const Candidate *left, const Candidate *right,
+                            int width)
+{
+    const double top_width = right->x_top - left->x_top;
+    const double bottom_width = right->x_bottom - left->x_bottom;
+    if (top_width < 0.08 * width || bottom_width < 0.18 * width ||
+        top_width > 0.90 * width || bottom_width > 0.95 * width ||
+        bottom_width < 0.75 * top_width) {
+        return -1.0;
+    }
+    const double center = (left->x_bottom + right->x_bottom) * 0.5;
+    const double center_score = 1.0 - fmin(1.0, fabs(center / width - 0.5) / 0.5);
+    const double convergence = fmin(1.0, bottom_width / top_width);
+    return 0.5 * center_score + 0.5 * convergence;
+}
+
+static int detect_boundaries_and_traversable(
     const uint8_t *edges,
     const uint8_t *road_mask,
     uint8_t *hough_lines,
     uint8_t *boundary_mask,
     uint8_t *traversable_mask,
     int width,
-    int height
+    int height,
+    PerceptionResult *result
 )
 {
-    const int theta_min = 20;
-    const int theta_max = 160;
-    const int theta_step = 1;
-    const int theta_bins = ((theta_max - theta_min) / theta_step) + 1;
-    const int diag = (int)(sqrt((double)(width * width + height * height)) + 0.5);
+    const int top = (height * 30) / 100;
+    const int bottom = (height * 78) / 100 - 1;
+    const int diag = (int)ceil(hypot((double)width, (double)height));
     const int rho_bins = (diag * 2) + 1;
     const int rho_offset = diag;
     const double radians_per_degree = 3.14159265358979323846 / 180.0;
+    double cos_table[THETA_BINS];
+    double sin_table[THETA_BINS];
+    Candidate left[MAX_CANDIDATES], right[MAX_CANDIDATES];
+    int left_count = 0, right_count = 0;
+    const size_t pixels = (size_t)width * (size_t)height;
+    memset(boundary_mask, 0, pixels);
+    memset(traversable_mask, 0, pixels);
+    if (hough_lines != NULL) memset(hough_lines, 0, pixels);
+    if (bottom <= top || width < 8) return 0;
 
-    double cos_table[theta_bins];
-    double sin_table[theta_bins];
-    int *accumulator = (int *)calloc((size_t)theta_bins * (size_t)rho_bins, sizeof(int));
+    int *accumulator = (int *)calloc((size_t)THETA_BINS * (size_t)rho_bins,
+                                     sizeof(int));
 
     if (accumulator == NULL) {
-        return;
+        return -2;
     }
 
-    for (int t = 0; t < theta_bins; ++t) {
-        const double theta = (double)(theta_min + (t * theta_step)) * radians_per_degree;
+    for (int t = 0; t < THETA_BINS; ++t) {
+        const double theta = (double)(THETA_MIN + t) * radians_per_degree;
         cos_table[t] = cos(theta);
         sin_table[t] = sin(theta);
     }
@@ -300,7 +381,8 @@ static void detect_boundaries_and_traversable(
                 continue;
             }
 
-            for (int t = 0; t < theta_bins; ++t) {
+            if (y < top || y > bottom) continue;
+            for (int t = 0; t < THETA_BINS; ++t) {
                 const double rho = ((double)x * cos_table[t]) + ((double)y * sin_table[t]);
                 const int rho_idx = (int)(rho + (double)rho_offset + 0.5);
 
@@ -312,131 +394,92 @@ static void detect_boundaries_and_traversable(
         }
     }
 
-    int best_left_theta = -1;
-    int best_left_rho = 0;
-    int best_left_votes = -1;
-    int best_right_theta = -1;
-    int best_right_rho = 0;
-    int best_right_votes = -1;
-
-    for (int t = 0; t < theta_bins; ++t) {
-        const double theta = (double)(theta_min + (t * theta_step)) * radians_per_degree;
-        const double line_dx_dy = (abs_double(cos_table[t]) > 1e-6) ? (-sin_table[t] / cos_table[t]) : 0.0;
-
+    for (int t = 0; t < THETA_BINS; ++t) {
+        const double verticality = fabs(cos_table[t]);
+        /* Horizontal lines have near-zero verticality and receive no candidacy. */
+        if (verticality < 0.35) continue;
         for (int r = 0; r < rho_bins; ++r) {
             const int votes = accumulator[(size_t)t * (size_t)rho_bins + (size_t)r];
-
-            if (votes <= 0) {
-                continue;
-            }
-
+            if (votes < (bottom - top + 1) / 5 ||
+                !is_local_peak(accumulator, t, r, rho_bins)) continue;
             const double rho = (double)r - (double)rho_offset;
-            const double x_at_bottom = (abs_double(cos_table[t]) > 1e-6)
-                ? ((rho - ((double)(height - 1) * sin_table[t])) / cos_table[t])
-                : 0.0;
-            const double x_at_top = (abs_double(cos_table[t]) > 1e-6)
-                ? ((rho - 0.0 * sin_table[t]) / cos_table[t])
-                : 0.0;
-
-            const int bottom_x = (int)(x_at_bottom + 0.5);
-            const int top_x = (int)(x_at_top + 0.5);
-            const int candidate_is_left = (bottom_x < top_x);
-            const int candidate_is_right = (bottom_x > top_x);
-
-            if (candidate_is_left && votes > best_left_votes) {
-                best_left_votes = votes;
-                best_left_theta = t;
-                best_left_rho = r;
-            }
-
-            if (candidate_is_right && votes > best_right_votes) {
-                best_right_votes = votes;
-                best_right_theta = t;
-                best_right_rho = r;
-            }
-
-            (void)theta;
-            (void)line_dx_dy;
-        }
-    }
-
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            const size_t idx = (size_t)y * (size_t)width + (size_t)x;
-            boundary_mask[idx] = 0;
-            traversable_mask[idx] = 0;
-            if (hough_lines != NULL) {
-                hough_lines[idx] = 0;
+            Candidate candidate = {0};
+            candidate.theta = t;
+            candidate.rho = r;
+            candidate.votes = votes;
+            candidate.verticality = verticality;
+            candidate.x_top = line_x(rho, sin_table[t], cos_table[t], top);
+            candidate.x_bottom = line_x(rho, sin_table[t], cos_table[t], bottom);
+            const double mid = (candidate.x_top + candidate.x_bottom) * 0.5;
+            if (candidate.x_top < 0 || candidate.x_top >= width ||
+                candidate.x_bottom < 0 || candidate.x_bottom >= width ||
+                mid < 0.12 * width || mid > 0.88 * width) continue;
+            candidate.support = edge_support(edges, &candidate, width, top, bottom);
+            if (candidate.support < 0.45) continue;
+            const double vote_score = fmin(1.0, (double)votes / (bottom - top + 1));
+            candidate.score = 0.55 * verticality +
+                              0.35 * candidate.support + 0.10 * vote_score;
+            if (mid < width * 0.5) {
+                add_candidate(left, &left_count, candidate);
+            } else {
+                add_candidate(right, &right_count, candidate);
             }
         }
     }
-
-    if (best_left_theta >= 0) {
-        const double theta = (double)(theta_min + (best_left_theta * theta_step)) * radians_per_degree;
-        const double rho = (double)best_left_rho - (double)rho_offset;
-
-        const int x0 = 0;
-        const int y0 = clamp_int((int)(((rho - ((double)x0 * cos_table[best_left_theta])) / sin_table[best_left_theta]) + 0.5), 0, height - 1);
-        const int x1 = width - 1;
-        const int y1 = clamp_int((int)(((rho - ((double)x1 * cos_table[best_left_theta])) / sin_table[best_left_theta]) + 0.5), 0, height - 1);
-
-        if (hough_lines != NULL) {
-            draw_line_segment(hough_lines, width, height, x0, y0, x1, y1, 255);
+    if (hough_lines != NULL) {
+        if (left_count) draw_candidate(hough_lines, &left[0], width, top, bottom);
+        if (right_count) draw_candidate(hough_lines, &right[0], width, top, bottom);
+    }
+    result->left_confidence = left_count ? (float)left[0].score : 0.0f;
+    result->right_confidence = right_count ? (float)right[0].score : 0.0f;
+    int selected_left = -1, selected_right = -1;
+    double best_score = -1.0;
+    for (int i = 0; i < left_count; ++i) {
+        for (int j = 0; j < right_count; ++j) {
+            const double geometry = pair_geometry(&left[i], &right[j], width);
+            if (geometry < 0) continue;
+            const double score = 0.40 * left[i].score +
+                                 0.40 * right[j].score + 0.20 * geometry;
+            if (score > best_score) {
+                best_score = score;
+                selected_left = i;
+                selected_right = j;
+            }
         }
-
-        draw_line_segment(boundary_mask, width, height, x0, y0, x1, y1, 255);
-
-        for (int y = 0; y < height; ++y) {
-            const int x = (abs_double(sin_table[best_left_theta]) > 1e-6)
-                ? (int)(((rho - ((double)y * sin_table[best_left_theta])) / cos_table[best_left_theta]) + 0.5)
-                : x0;
-
-            if (x >= 0 && x < width) {
+    }
+    if (selected_left >= 0 && best_score >= 0.65) {
+        const Candidate *l = &left[selected_left], *r = &right[selected_right];
+        result->validity = VALID_PAIR;
+        result->confidence = (float)best_score;
+        result->left_confidence = (float)l->score;
+        result->right_confidence = (float)r->score;
+        draw_candidate(boundary_mask, l, width, top, bottom);
+        draw_candidate(boundary_mask, r, width, top, bottom);
+        const double left_slope = (l->x_bottom - l->x_top) / (bottom - top);
+        const double right_slope = (r->x_bottom - r->x_top) / (bottom - top);
+        #pragma omp parallel for schedule(static)
+        for (int y = top; y <= bottom; ++y) {
+            const int start = clamp_int((int)ceil(l->x_top + (y - top) * left_slope), 0, width - 1);
+            const int end = clamp_int((int)floor(r->x_top + (y - top) * right_slope), 0, width - 1);
+            for (int x = start; x <= end; ++x) {
                 const size_t idx = (size_t)y * (size_t)width + (size_t)x;
-                if (road_mask[idx] != 0) {
-                    traversable_mask[idx] = 255;
-                }
+                if (road_mask[idx]) traversable_mask[idx] = 255;
             }
         }
-
-        (void)theta;
+    } else if (left_count && right_count) {
+        result->validity = (best_score >= 0) ? LOW_CONFIDENCE : PAIR_REJECTED;
+        result->confidence = (float)fmax(0.0, best_score);
+    } else if (left_count || right_count) {
+        const Candidate *single = left_count ? &left[0] : &right[0];
+        result->validity = left_count ? LEFT_ONLY : RIGHT_ONLY;
+        result->confidence = (float)single->score;
+        draw_candidate(boundary_mask, single, width, top, bottom);
     }
-
-    if (best_right_theta >= 0) {
-        const double theta = (double)(theta_min + (best_right_theta * theta_step)) * radians_per_degree;
-        const double rho = (double)best_right_rho - (double)rho_offset;
-
-        const int x0 = 0;
-        const int y0 = clamp_int((int)(((rho - ((double)x0 * cos_table[best_right_theta])) / sin_table[best_right_theta]) + 0.5), 0, height - 1);
-        const int x1 = width - 1;
-        const int y1 = clamp_int((int)(((rho - ((double)x1 * cos_table[best_right_theta])) / sin_table[best_right_theta]) + 0.5), 0, height - 1);
-
-        if (hough_lines != NULL) {
-            draw_line_segment(hough_lines, width, height, x0, y0, x1, y1, 255);
-        }
-
-        draw_line_segment(boundary_mask, width, height, x0, y0, x1, y1, 255);
-
-        for (int y = 0; y < height; ++y) {
-            const int x = (abs_double(sin_table[best_right_theta]) > 1e-6)
-                ? (int)(((rho - ((double)y * sin_table[best_right_theta])) / cos_table[best_right_theta]) + 0.5)
-                : x1;
-
-            if (x >= 0 && x < width) {
-                const size_t idx = (size_t)y * (size_t)width + (size_t)x;
-                if (road_mask[idx] != 0) {
-                    traversable_mask[idx] = 255;
-                }
-            }
-        }
-
-        (void)theta;
-    }
-
     free(accumulator);
+    return 0;
 }
 
-int process_traversability_pipeline(
+int process_traversability_pipeline_ex(
     const uint8_t *input,
     uint8_t *gray,
     uint8_t *denoised,
@@ -446,12 +489,17 @@ int process_traversability_pipeline(
     uint8_t *boundary_mask,
     uint8_t *traversable_mask,
     int width,
-    int height
+    int height,
+    PerceptionResult *result
 )
 {
-    if (input == NULL || gray == NULL || width <= 0 || height <= 0) {
+    if (input == NULL || gray == NULL || result == NULL || width <= 0 || height <= 0 ||
+        width > INT_MAX / 100 || height > INT_MAX / 100 ||
+        (size_t)width > SIZE_MAX / (size_t)height / 3U ||
+        hypot((double)width, (double)height) > (INT_MAX - 1) / 2.0) {
         return -1;
     }
+    *result = (PerceptionResult){0};
 
     rgb8_to_gray(input, gray, width, height);
 
@@ -460,31 +508,44 @@ int process_traversability_pipeline(
     }
 
     if (edges != NULL || road_mask != NULL || hough_lines != NULL || boundary_mask != NULL || traversable_mask != NULL) {
-        if (road_mask == NULL || boundary_mask == NULL || traversable_mask == NULL) {
+        if (edges == NULL || road_mask == NULL || boundary_mask == NULL ||
+            traversable_mask == NULL) {
             return -1;
         }
 
-        if (edges != NULL) {
-            const uint8_t *edge_source = (denoised != NULL) ? denoised : gray;
-            sobel_edges(edge_source, edges, width, height);
-        }
+        const uint8_t *edge_source = (denoised != NULL) ? denoised : gray;
+        sobel_edges(edge_source, edges, width, height);
 
         build_road_candidate_mask(input, gray, road_mask, width, height);
 
-        detect_boundaries_and_traversable(
-            (edges != NULL) ? edges : gray,
+        const int status = detect_boundaries_and_traversable(
+            edges,
             road_mask,
             hough_lines,
             boundary_mask,
             traversable_mask,
             width,
-            height
+            height,
+            result
         );
-
+        if (status != 0) return status;
         clear_vehicle_region(boundary_mask, traversable_mask, width, height);
     }
 
     return 0;
+}
+
+/* Preserve the original ctypes ABI for existing callers. */
+int process_traversability_pipeline(
+    const uint8_t *input, uint8_t *gray, uint8_t *denoised,
+    uint8_t *edges, uint8_t *road_mask, uint8_t *hough_lines,
+    uint8_t *boundary_mask, uint8_t *traversable_mask,
+    int width, int height)
+{
+    PerceptionResult ignored;
+    return process_traversability_pipeline_ex(
+        input, gray, denoised, edges, road_mask, hough_lines,
+        boundary_mask, traversable_mask, width, height, &ignored);
 }
 
 int process_rgb8_to_gray(

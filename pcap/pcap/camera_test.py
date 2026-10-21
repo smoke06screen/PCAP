@@ -2,13 +2,31 @@ import ctypes
 from importlib.machinery import EXTENSION_SUFFIXES
 import os
 
-import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
+
+
+class PerceptionResult(ctypes.Structure):
+    _fields_ = [
+        ('validity', ctypes.c_int),
+        ('confidence', ctypes.c_float),
+        ('left_confidence', ctypes.c_float),
+        ('right_confidence', ctypes.c_float),
+    ]
+
+
+VALIDITY_LABELS = {
+    0: 'No reliable boundary',
+    1: 'Left boundary only',
+    2: 'Right boundary only',
+    3: 'Valid boundary pair',
+    4: 'Pair rejected by geometry',
+    5: 'Low confidence pair',
+}
 
 
 class CameraTest(Node):
@@ -45,7 +63,7 @@ class CameraTest(Node):
 
         self.lib.process_rgb8_to_gray.restype = ctypes.c_int
 
-        self.lib.process_traversability_pipeline.argtypes = [
+        self.lib.process_traversability_pipeline_ex.argtypes = [
             uchar_ptr,          # input rgb image
             uchar_ptr,          # grayscale output
             uchar_ptr,          # denoised output
@@ -55,10 +73,12 @@ class CameraTest(Node):
             uchar_ptr,          # boundary mask
             uchar_ptr,          # traversable mask
             ctypes.c_int,       # width
-            ctypes.c_int        # height
+            ctypes.c_int,      # height
+            ctypes.POINTER(PerceptionResult)
         ]
 
-        self.lib.process_traversability_pipeline.restype = ctypes.c_int
+        self.lib.process_traversability_pipeline_ex.restype = ctypes.c_int
+        self.last_validity = None
 
         self.declare_parameter('show_window', True)
         self.show_window = self.get_parameter(
@@ -134,7 +154,7 @@ class CameraTest(Node):
         row_size = msg.width * 3
         buffer_size = msg.step * msg.height
 
-        if msg.step < row_size or len(msg.data) < buffer_size:
+        if msg.width <= 0 or msg.height <= 0 or msg.step < row_size or len(msg.data) < buffer_size:
             self.get_logger().error('Invalid RGB image buffer dimensions')
             return
 
@@ -172,7 +192,8 @@ class CameraTest(Node):
         boundary_ptr = boundary_mask.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8))
         traversable_ptr = traversable_mask.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8))
 
-        result = self.lib.process_traversability_pipeline(
+        perception = PerceptionResult()
+        result = self.lib.process_traversability_pipeline_ex(
             input_ptr,
             gray_ptr,
             denoised_ptr,
@@ -182,7 +203,8 @@ class CameraTest(Node):
             boundary_ptr,
             traversable_ptr,
             msg.width,
-            msg.height
+            msg.height,
+            ctypes.byref(perception)
         )
 
         if result != 0:
@@ -190,6 +212,13 @@ class CameraTest(Node):
                 'C image processing failed'
             )
             return
+
+        if perception.validity != self.last_validity:
+            label = VALIDITY_LABELS.get(perception.validity, 'Unknown')
+            self.get_logger().info(
+                f'{label}; confidence={perception.confidence:.2f}'
+            )
+            self.last_validity = perception.validity
 
         if self.show_window and self.figure is not None:
             updates = [
@@ -203,6 +232,11 @@ class CameraTest(Node):
 
             for panel, data in zip(self.panels, updates):
                 panel.set_data(data)
+
+            label = VALIDITY_LABELS.get(perception.validity, 'Unknown')
+            self.figure.suptitle(
+                f'{label} | confidence {perception.confidence:.2f}'
+            )
 
             self.figure.tight_layout()
             self.figure.canvas.draw_idle()

@@ -30,7 +30,7 @@ roads.
 
 ## Current implementation
 
-Established components:
+Implemented components:
 
 -   ROS2 Python package named `pcap`.
 -   Gazebo robot description and launch entry point.
@@ -38,10 +38,21 @@ Established components:
 -   Direct handling of `sensor_msgs/Image.data` for `rgb8` images using
     NumPy.
 -   Native C shared library loaded through Python `ctypes`.
--   RGB-to-grayscale conversion in C using an OpenMP parallel loop.
+-   RGB-to-grayscale, 3×3 box blur, thresholded Sobel edges, a color
+    candidate mask, and Hough voting in C using OpenMP where applicable.
+-   Hough candidates scored by vertical orientation, edge continuity,
+    and votes; a compatible left/right pair is selected before filling
+    the traversable mask.
+-   Explicit detector states and evidence scores available from the C
+    library and shown by the ROS node.
 -   Shared library compiled with GCC and linked against the OpenMP
     runtime.
--   OpenCV display of the grayscale result.
+-   Six-panel Matplotlib diagnostic display.
+
+The detector remains a simple straight-boundary prototype. It has not
+been validated against labelled scenes. Its score is not a calibrated
+probability. Serial C variants, an offline benchmark runner, controlled
+scenario datasets, and quality measurements are still to be added.
 
 ## Architecture
 
@@ -147,7 +158,7 @@ Run the registered camera-processing executable:
 ros2 run pcap camera_test
 ```
 
-On a headless system, disable the OpenCV window:
+On a headless system, disable the Matplotlib window:
 
 ``` bash
 ros2 run pcap camera_test --ros-args -p show_window:=false
@@ -203,11 +214,43 @@ The Python wrapper passes input and output buffers through `ctypes`. The
 C function should receive explicit dimensions and should not retain
 pointers after the call returns.
 
-The current native operation is RGB-to-grayscale conversion. Its OpenMP
-loop uses static scheduling and is compiled with optimization and OpenMP
-enabled. Small images or lightweight kernels may not benefit from
+The native pipeline currently uses OpenMP for pixel loops and Hough
+voting. Small images or lightweight kernels may not benefit from
 parallelization because thread-management overhead can outweigh the
-work.
+work. The current code has no serial C counterpart, so no serial versus
+OpenMP performance claim can yet be made.
+
+### Boundary selection and failure states
+
+Hough votes come from thresholded Sobel edges inside the color candidate
+mask, between 30% and 78% of image height. Candidate lines are checked
+for edge support within two pixels along this region. Lines with support
+below 0.45 are rejected. The candidate score is
+`0.55 × verticality + 0.35 × edge support + 0.10 × normalized votes`,
+where `verticality = |cos(theta)|` for the Hough line normal. This gives
+near-vertical lines the most weight; lines with verticality below 0.35
+are rejected, so near-horizontal markings cannot become boundaries.
+These constants are currently fixed in C and should be tuned only with
+recorded test data.
+
+The detector tests left/right pairs for ordering, plausible width at
+the top and bottom of the region, and convergence. A valid pair fills
+the pixels between the lines where the color candidate mask accepts
+them, excluding the visible robot region. A single reliable boundary
+is displayed but produces no traversable mask. Rejected or missing
+pairs also produce an empty traversable mask. The status codes are:
+`0` no boundary, `1` left only, `2` right only, `3` valid pair,
+`4` pair rejected by geometry, and `5` low-confidence pair.
+The score is an interpretable evidence score in `[0, 1]`, not a
+probability of correctness.
+
+The existing `process_traversability_pipeline` C entry point remains
+available. `process_traversability_pipeline_ex` takes the same arguments
+plus a final pointer to a result structure containing `int validity`
+followed by `float confidence`, `float left_confidence`, and
+`float right_confidence`. Both entry points return `0` for successful
+processing or a negative error code. The ROS node uses the extended
+entry point.
 
 ### Thread count
 
