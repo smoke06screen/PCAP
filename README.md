@@ -4,6 +4,9 @@ A ROS2 and Gazebo Classic project exploring lightweight road-boundary
 and traversable-region detection for a simulated mobile robot, with
 image-processing kernels implemented in C and parallelized using OpenMP.
 
+For a first-time explanation of the current code and each processing stage,
+see [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md).
+
 ## Overview
 
 PCAP investigates whether a classical computer-vision pipeline can
@@ -51,8 +54,9 @@ Implemented components:
 
 The detector remains a simple straight-boundary prototype. It has not
 been validated against labelled scenes. Its score is not a calibrated
-probability. Serial C variants, an offline benchmark runner, controlled
-scenario datasets, and quality measurements are still to be added.
+probability. The offline benchmark builds serial and OpenMP variants
+from the same C source; see [bench/RESULTS.md](bench/RESULTS.md).
+Controlled scenario datasets and quality measurements are still to be added.
 
 ## Architecture
 
@@ -76,7 +80,7 @@ C image-processing kernel(s)
 Output NumPy buffer
           |
           v
-Python/OpenCV visualization and evaluation
+Python/Matplotlib visualization and evaluation
 ```
 
 The Python layer is intended to remain thin. Native image-processing
@@ -92,19 +96,19 @@ The development environment used for this project includes:
 -   Gazebo Classic
 -   Python 3
 -   NumPy
--   OpenCV Python bindings (`cv2`)
+-   Matplotlib for the current diagnostic window
 -   GCC with OpenMP support
 -   `ctypes` (Python standard library)
 
-The native library is compiled with `-fopenmp`. On Linux, it commonly
-links against the OpenMP runtime `libgomp.so.1`.
+The installed native library is compiled with `-fopenmp`. On Linux, it
+commonly links against the OpenMP runtime `libgomp.so.1`.
 
 ## Build
 
 From the workspace root:
 
 ``` bash
-cd ~/PCAP
+cd ~/ros2_pcap
 source /opt/ros/humble/setup.bash
 sudo apt install build-essential
 rosdep install --from-paths src --ignore-src -r -y
@@ -121,7 +125,7 @@ The native C/OpenMP library is compiled automatically during the
 
 ``` bash
 source /opt/ros/humble/setup.bash
-cd ~/PCAP
+cd ~/ros2_pcap
 source install/setup.bash
 ```
 
@@ -217,8 +221,9 @@ pointers after the call returns.
 The native pipeline currently uses OpenMP for pixel loops and Hough
 voting. Small images or lightweight kernels may not benefit from
 parallelization because thread-management overhead can outweigh the
-work. The current code has no serial C counterpart, so no serial versus
-OpenMP performance claim can yet be made.
+work. The offline runner in `bench/benchmark_native.py` compiles the same
+source once with OpenMP and once without it, verifies identical outputs,
+and measures native-call timing on saved frames.
 
 ### Boundary selection and failure states
 
@@ -335,4 +340,4 @@ from kernel benchmarks, and report the result honestly.
 
 ## Acknowledgements
 
-Built with ROS2, Gazebo Classic, OpenCV, NumPy, GCC, and OpenMP.
+Built with ROS2, Gazebo Classic, Matplotlib, NumPy, GCC, and OpenMP.

@@ -440,7 +440,7 @@ static int detect_boundaries_and_traversable(
         sin_table[t] = sin(theta);
     }
 
-    #pragma omp parallel for schedule(static)
+    #pragma omp parallel for schedule(dynamic, 8)
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             const size_t idx = (size_t)y * (size_t)width + (size_t)x;
