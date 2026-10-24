@@ -1,343 +1,146 @@
-# PCAP --- Parallelized Camera-Based Traversability Perception
+# FCV — Camera-Based Traversability Perception
 
-A ROS2 and Gazebo Classic project exploring lightweight road-boundary
-and traversable-region detection for a simulated mobile robot, with
-image-processing kernels implemented in C and parallelized using OpenMP.
+FCV is a ROS 2 Humble and Gazebo Classic project that estimates straight road
+boundaries and a traversable image region for a simulated mobile robot. The
+perception pipeline is implemented in serial Python using NumPy and OpenCV.
 
-For a first-time explanation of the current code and each processing stage,
-see [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md).
+See [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md) for the algorithm and code
+layout.
 
-## Overview
+## Current pipeline
 
-PCAP investigates whether a classical computer-vision pipeline can
-estimate road boundaries and a traversable region from a monocular
-camera while keeping computationally intensive image processing in
-native C.
+One ROS node, `camera_test`, subscribes to `/camera/image_raw`, processes each
+`rgb8` frame, reports the boundary state, and optionally shows six diagnostic
+panels in a lightweight OpenCV window. The subscription keeps only the newest
+sensor frame, and display refresh is handled by a separate timer. The stages
+are:
 
-The intended evaluation compares **serial C** and **OpenMP-parallel C**
-implementations on identical frames. It will measure computational
-performance and perception quality under controlled visual conditions,
-including shadows, weak road boundaries, surface patches, and curved
-roads.
+1. RGB-to-grayscale conversion.
+2. 3×3 box blur.
+3. Thresholded Sobel edges.
+4. Color-based road candidate mask.
+5. Center-connected boundary evidence.
+6. Custom Hough voting and line scoring.
+7. Left/right pair selection and traversable-mask filling.
 
-## Goals
-
--   Ingest simulated camera images through ROS2.
--   Keep performance-critical image-processing kernels in C.
--   Use OpenMP for parallelizable loops.
--   Keep Python as a thin ROS2, buffer-handling, library-call, and
-    visualization layer.
--   Develop road-boundary and traversable-region estimation.
--   Compare serial and parallel implementations using identical inputs.
--   Evaluate robustness on repeatable visual test cases.
-
-## Current implementation
-
-Implemented components:
-
--   ROS2 Python package named `pcap`.
--   Gazebo robot description and launch entry point.
--   Camera subscriber in `camera_test.py`.
--   Direct handling of `sensor_msgs/Image.data` for `rgb8` images using
-    NumPy.
--   Native C shared library loaded through Python `ctypes`.
--   RGB-to-grayscale, 3×3 box blur, thresholded Sobel edges, a color
-    candidate mask, and Hough voting in C using OpenMP where applicable.
--   Hough candidates scored by plausible slant, boundary continuity,
-    and votes; a compatible left/right pair is selected before filling
-    the traversable mask.
--   Explicit detector states and evidence scores available from the C
-    library and shown by the ROS node.
--   Shared library compiled with GCC and linked against the OpenMP
-    runtime.
--   Six-panel Matplotlib diagnostic display.
-
-The detector remains a simple straight-boundary prototype. It has not
-been validated against labelled scenes. Its score is not a calibrated
-probability. The offline benchmark builds serial and OpenMP variants
-from the same C source; see [bench/RESULTS.md](bench/RESULTS.md).
-Controlled scenario datasets and quality measurements are still to be added.
-
-## Architecture
-
-``` text
-Gazebo Classic camera sensor
-          |
-          | /camera/image_raw (sensor_msgs/msg/Image)
-          v
-ROS2 Python node
-          |
-          | Read rgb8 message data directly
-          | NumPy buffer/view
-          v
-ctypes call into native shared library
-          |
-          v
-C image-processing kernel(s)
-          |
-          | OpenMP for parallelizable loops
-          v
-Output NumPy buffer
-          |
-          v
-Python/Matplotlib visualization and evaluation
-```
-
-The Python layer is intended to remain thin. Native image-processing
-kernels can then be benchmarked independently of ROS message handling
-and visualization.
+The fixed thresholds, ROI, Hough parameters, scoring, geometry checks, and
+validity values are documented in the walkthrough. The detector is a
+straight-boundary prototype and its confidence is an evidence score, not a
+calibrated probability.
 
 ## Requirements
 
-The development environment used for this project includes:
+- Ubuntu 22.04
+- ROS 2 Humble
+- Gazebo Classic with `gazebo_ros` and `gazebo_plugins`
+- Python 3, NumPy, and OpenCV
 
--   Ubuntu 22.04
--   ROS2 Humble
--   Gazebo Classic
--   Python 3
--   NumPy
--   Matplotlib for the current diagnostic window
--   GCC with OpenMP support
--   `ctypes` (Python standard library)
+The installed `camera_test` command disables per-user Python packages before
+loading the node. This prevents packages installed with `pip --user` (such as
+NumPy 2) from overriding the ROS Humble-compatible Ubuntu packages.
 
-The installed native library is compiled with `-fopenmp`. On Linux, it
-commonly links against the OpenMP runtime `libgomp.so.1`.
+Install package dependencies from the workspace root:
+
+```bash
+cd ~/PCAP
+source /opt/ros/humble/setup.bash
+rosdep install --from-paths src --ignore-src -r -y
+```
+
+No C compiler or OpenMP runtime is required by this branch.
 
 ## Build
 
-From the workspace root:
+Run from the workspace root, not from `src`:
 
-``` bash
-cd ~/ros2_pcap
+```bash
+cd ~/PCAP
 source /opt/ros/humble/setup.bash
-sudo apt install build-essential
-rosdep install --from-paths src --ignore-src -r -y
-colcon build --symlink-install
+colcon build --symlink-install --packages-select fcv
 source install/setup.bash
 ```
 
-The native C/OpenMP library is compiled automatically during the
-`colcon` build.
+Re-run the final `source install/setup.bash` in each new terminal after sourcing
+ROS 2.
 
-## Running
+## Run
 
-### 1. Source the environment
+Start Gazebo and spawn the robot:
 
-``` bash
+```bash
+cd ~/PCAP
 source /opt/ros/humble/setup.bash
-cd ~/ros2_pcap
 source install/setup.bash
+ros2 launch fcv bot.launch.py
 ```
 
-### 2. Launch the robot and simulation
+In a second sourced terminal, start the perception node:
 
-The package contains `launch/bot.launch.py`:
-
-``` bash
-ros2 launch pcap bot.launch.py
+```bash
+cd ~/PCAP
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 run fcv camera_test
 ```
 
-The exact launch behavior depends on the current launch file and local
-Gazebo setup.
+For a machine without a display, or to disable the diagnostic window:
 
-### 3. Inspect camera topics
+```bash
+ros2 run fcv camera_test --ros-args -p show_window:=false
+```
 
-In another sourced terminal:
+The node expects `/camera/image_raw` with `rgb8` encoding. Useful checks are:
 
-``` bash
+```bash
 ros2 topic list | grep camera
 ros2 topic info /camera/image_raw
 ros2 topic hz /camera/image_raw
 ```
 
-The expected raw image topic is `/camera/image_raw`; the current sensor
-configuration expects `/camera/camera_info` for camera information.
-Confirm actual topic names with `ros2 topic list`.
+## Test
 
-### 4. Run the camera-processing node
+From the repository root:
 
-Run the registered camera-processing executable:
-
-``` bash
-ros2 run pcap camera_test
+```bash
+cd ~/PCAP/src
+python3 -m pytest -q fcv/test
 ```
 
-On a headless system, disable the Matplotlib window:
+The perception tests cover blank, single-boundary, paired, narrow,
+horizontal-stripe, slanted, and tiny images, plus recorded Gazebo frames. They
+also lock every output byte and result field for all three recorded frames.
+Camera-message tests cover padding, encoding, and invalid dimensions. Gazebo
+does not need to be running.
 
-``` bash
-ros2 run pcap camera_test --ros-args -p show_window:=false
+## Offline benchmark
+
+To time the serial Python pipeline on the recorded frames:
+
+```bash
+cd ~/PCAP/src
+python3 bench/benchmark_python.py --repetitions 20 --warmup 3
 ```
 
-## Camera configuration
+The timer excludes ROS, Gazebo, plotting, and frame loading. The old files in
+`bench/results/native_*` are retained only as historical measurements from the
+former C/OpenMP implementation; they do not describe this branch's runtime.
 
-The current camera configuration uses a 640 × 480 RGB image, a
-configured update rate of 10 Hz, and horizontal FOV specified in
-radians.
+## Main files
 
-Example values:
+- `fcv/fcv/camera_test.py`: ROS subscriber, message validation, logging, and
+  display.
+- `fcv/fcv/perception.py`: complete serial perception algorithm.
+- `fcv/test/test_perception.py`: synthetic and recorded-frame regression tests.
+- `fcv/launch/bot.launch.py`: Gazebo and robot launch.
+- `fcv/urdf/fcv_model.urdf`: robot and sensor description.
+- `bench/benchmark_python.py`: offline serial timing utility.
 
-``` xml
-<camera>
-  <horizontal_fov>1.5708</horizontal_fov>
-  <image>
-    <format>R8G8B8</format>
-    <width>640</width>
-    <height>480</height>
-  </image>
-  <clip>
-    <near>0.05</near>
-    <far>15.0</far>
-  </clip>
-</camera>
-```
+## Current limits
 
-`1.5708` radians is approximately 90 degrees. The standard Gazebo
-Classic camera configuration specifies horizontal FOV; vertical FOV
-follows from the image aspect ratio. These are example values, not
-mandatory settings. A wider FOV captures more of the scene but makes
-each road feature occupy fewer pixels at a fixed resolution.
-
-## Implementation notes
-
-### ROS image buffer
-
-The node accepts `rgb8`, validates the row stride and buffer size, and
-copies the active pixels into a contiguous NumPy array before calling C.
-Conceptually:
-
-``` python
-rows = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.step)
-image = np.ascontiguousarray(
-    rows[:, :msg.width * 3].reshape(msg.height, msg.width, 3)
-)
-```
-
-### C/OpenMP interface
-
-The Python wrapper passes input and output buffers through `ctypes`. The
-C function should receive explicit dimensions and should not retain
-pointers after the call returns.
-
-The native pipeline currently uses OpenMP for pixel loops and Hough
-voting. Small images or lightweight kernels may not benefit from
-parallelization because thread-management overhead can outweigh the
-work. The offline runner in `bench/benchmark_native.py` compiles the same
-source once with OpenMP and once without it, verifies identical outputs,
-and measures native-call timing on saved frames.
-
-### Boundary selection and failure states
-
-The thresholded Sobel view remains available for diagnostics. Hough
-votes now come from the left and right transitions of the center-connected
-color road mask, between 25% and 78% of image height. This limits voting
-from asphalt texture and nearby grass. Candidate lines are checked for
-boundary support within two pixels along their visible part; at least
-20% of the tested height must be visible. Lines with support below 0.45
-or votes below 12% of the tested height are rejected. A line may leave
-the image near the bottom, where the resulting mask is clipped to the
-image. The candidate score is
-`0.55 × orientation + 0.35 × edge support + 0.10 × normalized votes`.
-Orientation uses the horizontal displacement per image row over the
-tested region. It scores a modest outward slant (about 0.35 pixels per
-row) above a perfectly vertical line; a line slanting the wrong way for
-its side is penalized. Lines with `|cos(theta)|` below 0.35 are still
-rejected, so near-horizontal markings cannot become boundaries.
-These constants are currently fixed in C and should be tuned only with
-recorded test data.
-
-The captured `pcap/test/frames/gazebo_camera_rgb8_001.npy` and
-`gazebo_camera_rgb8_failing_001.npy` frames are repeatable regression
-cases for roads whose edges leave the lower image. In the second frame,
-the left edge is visible only briefly while the world/sky edge is above
-the voting region.
-The color mask assumes the road is less green than its surroundings;
-other road materials and lighting still need labelled evaluation.
-
-The detector tests left/right pairs for ordering, plausible width at
-the top and bottom of the region, and convergence. A valid pair fills
-the pixels between the lines where the color candidate mask accepts
-them, excluding the visible robot region. A single reliable boundary
-is displayed but produces no traversable mask. Rejected or missing
-pairs also produce an empty traversable mask. The status codes are:
-`0` no boundary, `1` left only, `2` right only, `3` valid pair,
-`4` pair rejected by geometry, and `5` low-confidence pair.
-The score is an interpretable evidence score in `[0, 1]`, not a
-probability of correctness.
-
-The existing `process_traversability_pipeline` C entry point remains
-available. `process_traversability_pipeline_ex` takes the same arguments
-plus a final pointer to a result structure containing `int validity`
-followed by `float confidence`, `float left_confidence`, and
-`float right_confidence`. Both entry points return `0` for successful
-processing or a negative error code. The ROS node uses the extended
-entry point.
-
-### Thread count
-
-For controlled experiments, set the OpenMP thread count explicitly:
-
-``` bash
-export OMP_NUM_THREADS=4
-```
-
-Record the thread count and machine details for each benchmark. Compare
-against a serial C implementation using the same input, output
-requirements, and timing method.
-
-### Suggested metrics
-
-**Performance** - Mean and median processing time per frame. - Per-stage
-and end-to-end runtime. - Throughput in frames per second. - Speedup:
-`serial runtime / OpenMP runtime`. - Parallel efficiency, when useful:
-`speedup / thread count`.
-
-**Perception** - Boundary-position error against labelled ground
-truth. - Traversable-mask intersection over union (IoU). - Detection
-success rate and false-detection rate. - Recovery behavior after
-shadows, weak boundaries, or occlusion.
-
-Document the measurement method, sample count, hardware, compiler flags,
-thread count, and whether timings include ROS message handling or
-visualization. Keep native-kernel benchmarks separate from end-to-end
-pipeline timings.
-
-
-## Troubleshooting
-
-### `libperception*.so` cannot be loaded
-
--   Install GCC/OpenMP build support and rebuild the package.
--   Run `ldd` on the installed library and resolve any `not found`
-    dependencies.
--   Source the rebuilt workspace before starting the node.
-
-### `cv_bridge` / NumPy ABI error
-
-The current development environment has encountered incompatibility
-between the installed ROS2 Humble `cv_bridge` and NumPy 2.x. The
-prototype avoids `cv_bridge` by reading the `rgb8` buffer directly. If
-the image conversion path changes, test the full ROS node and native
-call.
-
-### Camera topic is missing
-
--   Confirm Gazebo is running and the robot spawned.
--   Inspect `ros2 topic list`.
--   Check the sensor and plugin configuration in the URDF.
--   Verify the topic name and message type with `ros2 topic info`.
-
-### Actual camera rate is lower than configured
-
-The sensor's `<update_rate>` is a requested update rate, not a guarantee
-that the whole simulation and subscriber pipeline will sustain it.
-Measure and report the achieved rate.
-
-### OpenMP is slower than serial
-
-This can happen for small images or lightweight kernels. Measure kernel
-time separately, control thread count, exclude unrelated display time
-from kernel benchmarks, and report the result honestly.
-
-## Acknowledgements
-
-Built with ROS2, Gazebo Classic, Matplotlib, NumPy, GCC, and OpenMP.
+- Each boundary is modeled as a straight line.
+- The road classifier is a fixed color heuristic tuned for the current Gazebo
+  scene.
+- The ROI is fixed at 25%–78% of image height.
+- There is no temporal tracking, steering, or published perception output
+  topic; the result is currently logged and displayed.
+- Perception quality has not been measured against a labelled dataset.

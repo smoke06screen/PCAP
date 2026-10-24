@@ -9,7 +9,7 @@
     <link name="bot_body">
         <visual>
             <geometry>
-                <mesh filename="package://pcap/meshes/bot_body.stl" scale="0.2 0.2 0.15"/>
+                <mesh filename="package://fcv/meshes/bot_body.stl" scale="0.2 0.2 0.15"/>
             </geometry>
             <material name="blue">
                 <color rgba="1 1 1 1"/>
@@ -17,7 +17,7 @@
         </visual>
         <collision>
             <geometry>
-                <mesh filename="package://pcap/meshes/bot_body.stl" scale="0.2 0.2 0.15"/>
+                <mesh filename="package://fcv/meshes/bot_body.stl" scale="0.2 0.2 0.15"/>
             </geometry>
         </collision>
         <inertial>
@@ -35,7 +35,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 1.57079632679 0"/>
             <geometry>
-                <mesh filename="package://pcap/meshes/wheel.STL" scale="0.8 0.8 0.85"/>
+                <mesh filename="package://fcv/meshes/wheel.STL" scale="0.8 0.8 0.85"/>
             </geometry>
             <material name="black">
                 <color rgba="0 0 0 1"/>
@@ -44,7 +44,7 @@
         <collision>
             <origin xyz="0 0 0" rpy="0 1.57079632679 0"/>
             <geometry>
-                <mesh filename="package://pcap/meshes/wheel.STL" scale="0.8 0.8 0.85"/>
+                <mesh filename="package://fcv/meshes/wheel.STL" scale="0.8 0.8 0.85"/>
             </geometry>
         </collision>
         <inertial>
@@ -64,7 +64,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 -1.57079632679 0"/>
             <geometry>
-                <mesh filename="package://pcap/meshes/wheel.STL" scale="0.8 0.8 0.85"/>
+                <mesh filename="package://fcv/meshes/wheel.STL" scale="0.8 0.8 0.85"/>
             </geometry>
             <material name="black">
                 <color rgba="0 0 0 1"/>
@@ -73,7 +73,7 @@
         <collision>
             <origin xyz="0 0 0" rpy="0 -1.57079632679 0"/>
             <geometry>
-                <mesh filename="package://pcap/meshes/wheel.STL" scale="0.8 0.8 0.85"/>
+                <mesh filename="package://fcv/meshes/wheel.STL" scale="0.8 0.8 0.85"/>
             </geometry>
         </collision>
         <inertial>
@@ -93,7 +93,7 @@
         <visual>
             <origin xyz ="0 0 0" rpy="1.57079632679 3.14159265359 0"/>
             <geometry>
-                <mesh filename="package://pcap/meshes/caster_part.STL" scale="0.5 0.5 0.5"/>
+                <mesh filename="package://fcv/meshes/caster_part.STL" scale="0.5 0.5 0.5"/>
             </geometry>
             <material name="green">
                 <color rgba="0 1 0 1"/>
@@ -116,7 +116,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 1.57079632679 0"/>
             <geometry>
-                <mesh filename="package://pcap/meshes/caster_wheel.STL" scale="0.5 0.5 1.2"/>
+                <mesh filename="package://fcv/meshes/caster_wheel.STL" scale="0.5 0.5 1.2"/>
             </geometry>
             <material name="blue">
                 <color rgba="0 0 1 1"/>
@@ -125,7 +125,7 @@
         <collision>
             <origin xyz="0 0 0" rpy="0 1.57079632679 0"/>
             <geometry>
-                <mesh filename="package://pcap/meshes/caster_wheel.STL" scale="0.5 0.5 0.7"/>
+                <mesh filename="package://fcv/meshes/caster_wheel.STL" scale="0.5 0.5 0.7"/>
             </geometry>
         </collision>
         <inertial>

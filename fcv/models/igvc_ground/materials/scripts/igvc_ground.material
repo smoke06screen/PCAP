@@ -10,7 +10,7 @@ material asphalt_ground/Image
 
       texture_unit
       {
-        texture pcap_tracks.png
+        texture fcv_tracks.png
       }
     }
   }

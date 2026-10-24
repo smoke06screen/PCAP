@@ -1,7 +1,7 @@
 <?xml version="1.0" ?>
 <sdf version="1.6">
 
-  <world name="pcap_test_world">
+  <world name="fcv_test_world">
 
     <!-- Lighting -->
     <include>

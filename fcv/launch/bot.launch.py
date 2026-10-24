@@ -13,7 +13,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
 
-    pkg_name = 'pcap'
+    pkg_name = 'fcv'
 
     # ------------------------------------------------------------
     # Package paths
@@ -24,13 +24,13 @@ def generate_launch_description():
     urdf_file = os.path.join(
         package_share,
         'urdf',
-        'pcap_model.urdf'
+        'fcv_model.urdf'
     )
 
     world_file = os.path.join(
         package_share,
         'worlds',
-        'pcap_test.world'
+        'fcv_test.world'
     )
 
     models_path = os.path.join(

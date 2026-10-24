@@ -1,9 +1,9 @@
 from glob import glob
 import os
 
-from setuptools import Extension, find_packages, setup
+from setuptools import find_packages, setup
 
-package_name = 'pcap'
+package_name = 'fcv'
 
 
 # ------------------------------------------------------------
@@ -33,15 +33,6 @@ setup(
     version='0.0.0',
 
     packages=find_packages(exclude=['test']),
-
-    ext_modules=[
-        Extension(
-            'pcap.libperception',
-            sources=['pcap/native/perception.c'],
-            extra_compile_args=['-O3', '-fopenmp'],
-            extra_link_args=['-fopenmp', '-lm'],
-        ),
-    ],
 
     data_files=[
         # ROS package index
@@ -92,7 +83,7 @@ setup(
     maintainer='shubh',
     maintainer_email='shubh06kesar@gmail.com',
 
-    description='PCAP parallel computer vision project',
+    description='FCV camera-based traversability perception project',
     license='Apache-2.0',
 
     extras_require={
@@ -103,7 +94,7 @@ setup(
 
     entry_points={
         'console_scripts': [
-            'camera_test = pcap.camera_test:main',
+            'camera_test = fcv.ros_entrypoint:main',
         ],
     },
 )
